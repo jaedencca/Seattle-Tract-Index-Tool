@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Seattle Census Tracts - Bus Stop Count</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <link href="https://fonts.googleapis.com/css?family=Titillium+Web|Oswald" rel="stylesheet">
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.8.1/mapbox-gl.css" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Titillium Web', serif;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+
+        #info {
+            z-index: 1000;
+            position: absolute;
+            width: 400px;
+            top: 20px;
+            left: 20px;
+            padding: 20px;
+            background: #343a40;
+            color: white;
+            border-radius: 5px;
+        }
+
+        #title {
+            font-size: 22px;
+            font-family: 'Oswald', sans-serif;
+            margin-bottom: 15px;
+        }
+
+        #desc {
+            color: lightgray;
+            font-size: 14px;
+            line-height: 1.5;
+            margin-bottom: 15px;
+        }
+
+        #legend {
+            position: absolute;
+            bottom: 40px;
+            right: 20px;
+            background: #343a40;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Titillium Web', sans-serif;
+            color: white;
+        }
+
+        .legend-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .legend-item {
+            margin: 5px 0;
+            display: flex;
+            align-items: center;
+        }
+
+        .legend-color {
+            width: 30px;
+            height: 15px;
+            margin-right: 10px;
+            border: 1px solid #fff;
+        }
+
+        .mapboxgl-popup-content {
+            padding: 15px;
+            font-family: 'Titillium Web', sans-serif;
+        }
+    </style>
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.8.1/mapbox-gl.js"></script>
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+</head>
+
+<body>
+    <div id="info">
+        <div id="title">Seattle Census Tracts<br>Bus Stop Density</div>
+        <div id="desc">
+            This map shows bus stop density per square mile of land area in each Seattle census tract. 
+            Darker colors indicate higher density of bus stops.
+            Click on a tract to see details.
+        </div>
+    </div>
+    <div id="map"></div>
+    <div id="legend">
+        <div class="legend-title">Bus Stops per Sq Mile</div>
+        <div id="legend-content"></div>
+    </div>
+    <script>
+        // Mapbox access token
+        mapboxgl.accessToken = 'pk.eyJ1IjoiamFlZGVuY2NhIiwiYSI6ImNtaGM4cDNxdDI3cHkya3B1emRxYzJuNWQifQ.GD3_Rhp6YQw5CkRSFClT0w';
+
+        // Initialize map
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/dark-v10',
+            zoom: 11,
+            center: [-122.3321, 47.6062] // Seattle center
+        });
+
+        // Color scale for choropleth map (density per square mile)
+        const colors = ['#FED976', '#FEB24C', '#FD8D3C', '#FC4E2A', '#E31A1C', '#BD0026', '#800026'];
+        const breaks = [0, 5, 10, 20, 30, 50, 75];
+
+        // Function to get color based on bus stop density
+        function getColor(density) {
+            for (let i = breaks.length - 1; i >= 0; i--) {
+                if (density >= breaks[i]) {
+                    return colors[i];
+                }
+            }
+            return colors[0];
+        }
+
+        // Load data asynchronously
+        async function loadData() {
+            try {
+                // Load census tracts
+                const tractsResponse = await fetch('assets/2020_Census_Tracts_Seattle_-8436267939808112280.geojson');
+                const tractsData = await tractsResponse.json();
+
+                // Load bus stops
+                const busStopsResponse = await fetch('assets/Seattle_bus_stops.geojson');
+                const busStopsData = await busStopsResponse.json();
+
+                // Count bus stops in each tract and calculate density using Turf.js
+                tractsData.features.forEach(tract => {
+                    const busStopsInTract = turf.pointsWithinPolygon(busStopsData, tract);
+                    const count = busStopsInTract.features.length;
+                    const landAcres = tract.properties.LAND_ACRES || 0;
+                    const landSqMiles = landAcres / 640; // Convert acres to square miles
+                    const density = landSqMiles > 0 ? count / landSqMiles : 0;
+                    
+                    tract.properties.busStopCount = count;
+                    tract.properties.busStopDensity = Math.round(density * 10) / 10; // Round to 1 decimal
+                    tract.properties.landSqMiles = Math.round(landSqMiles * 100) / 100;
+                });
+
+                // Add data to map when loaded
+                map.on('load', () => {
+                    // Add census tracts source
+                    map.addSource('tracts', {
+                        type: 'geojson',
+                        data: tractsData
+                    });
+
+                    // Add census tracts fill layer
+                    map.addLayer({
+                        id: 'tracts-fill',
+                        type: 'fill',
+                        source: 'tracts',
+                        paint: {
+                            'fill-color': [
+                                'step',
+                                ['get', 'busStopDensity'],
+                                colors[0],
+                                breaks[1], colors[1],
+                                breaks[2], colors[2],
+                                breaks[3], colors[3],
+                                breaks[4], colors[4],
+                                breaks[5], colors[5],
+                                breaks[6], colors[6]
+                            ],
+                            'fill-opacity': 0.7
+                        }
+                    });
+
+                    // Add census tracts outline layer
+                    map.addLayer({
+                        id: 'tracts-outline',
+                        type: 'line',
+                        source: 'tracts',
+                        paint: {
+                            'line-color': '#ffffff',
+                            'line-width': 1,
+                            'line-opacity': 0.5
+                        }
+                    });
+
+                    // Add hover effect
+                    map.on('mousemove', 'tracts-fill', (e) => {
+                        map.getCanvas().style.cursor = 'pointer';
+                    });
+
+                    map.on('mouseleave', 'tracts-fill', () => {
+                        map.getCanvas().style.cursor = '';
+                    });
+
+                    // Add click popup
+                    map.on('click', 'tracts-fill', (e) => {
+                        const props = e.features[0].properties;
+                        const html = `
+                            <strong>${props.NAME}</strong><br>
+                            <strong>Density:</strong> ${props.busStopDensity} stops/sq mi<br>
+                            <strong>Bus Stops:</strong> ${props.busStopCount}<br>
+                            <strong>Land Area:</strong> ${props.landSqMiles} sq mi<br>
+                            <strong>Tract Number:</strong> ${props.TRACT_NUMB}<br>
+                            <strong>Area:</strong> ${props.GEN_ALIAS || 'N/A'}<br>
+                            <strong>Details:</strong> ${props.DETL_NAMES || 'N/A'}
+                        `;
+                        new mapboxgl.Popup()
+                            .setLngLat(e.lngLat)
+                            .setHTML(html)
+                            .addTo(map);
+                    });
+
+                    // Generate legend
+                    generateLegend();
+                });
+
+            } catch (error) {
+                console.error('Error loading data:', error);
+            }
+        }
+
+        // Generate legend
+        function generateLegend() {
+            const legendContent = document.getElementById('legend-content');
+            let html = '';
+            
+            for (let i = breaks.length - 1; i >= 0; i--) {
+                let label = '';
+                if (i === breaks.length - 1) {
+                    label = `${breaks[i]}+`;
+                } else if (i === 0) {
+                    label = `0-${breaks[i + 1]}`;
+                } else {
+                    label = `${breaks[i]}-${breaks[i + 1]}`;
+                }
+                
+                html += `
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: ${colors[i]}"></div>
+                        <span>${label}</span>
+                    </div>
+                `;
+            }
+            
+            legendContent.innerHTML = html;
+        }
+
+        // Load the data
+        loadData();
+    </script>
+</body>
+
+</html>
