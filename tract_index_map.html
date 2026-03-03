@@ -34,6 +34,22 @@
 
 <body>
     <div id="info">
+        <div style="font-size:20px; font-weight:700; margin-bottom:4px;">
+             Seattle Livability Dashboard
+        </div>
+        <div style="font-size:12px; color:#666; margin-bottom:12px;">
+             Visualize census tract livability scores based on transit, parks, and food access
+        </div>
+        <div style="
+            background:#e6e6fa;
+            color:#333;
+            padding:8px 12px;
+            border-radius:20px;
+            font-size:11px;
+            margin-bottom:12px;">
+            Hover over census tracts to see composite scores. Click a tract to view detailed metrics and adjust weights using the sliders.
+        </div>
+
         <div id="title">Accessibility Index</div>
         <div id="metrics"></div>
         <div class="weight-panel">
@@ -53,8 +69,33 @@
             <button class="reset-btn" id="reset-weights">Reset</button>
         </div>
         <div class="weight-panel" id="distribution-panel" style="margin-top:10px;">
-            <div style="font-weight: bold; margin-bottom: 8px;">Tract Distribution</div>
+            <div style="font-weight:600; font-size:14px; margin-bottom:4px;">
+                Score Distribution Of The Selected Tract
+        </div>
+        <div style="font-size:11px; color:#777; margin-bottom:10px;">
+            Distribution of composite scores across Seattle tracts
+        </div>
             <div id="distribution-chart" style="height:140px;"></div>
+        </div>
+        <div class="weight-panel" style="margin-top:15px;">
+            <div style="font-weight:600; font-size:14px; margin-bottom:10px;">
+                About Dashboard
+            </div>
+
+            <div style="font-size:12px; margin-bottom:10px;">
+                 <span style="color:#2f5cff; font-weight:600;">Transit Availability</span><br>
+                 Measures access to bus stops, walkability scores, and bike lane infrastructure within each census tract.
+             </div>
+
+             <div style="font-size:12px; margin-bottom:10px;">
+                 <span style="color:#2ca02c; font-weight:600;">Park Availability</span><br>
+                 Measures the presence and quality of parks, green spaces, and recreational amenities in the area.
+             </div>
+
+             <div style="font-size:12px;">
+                 <span style="color:#d62728; font-weight:600;">Food Availability</span><br>
+                 Measures proximity to grocery stores and considers food prices in the area.
+              </div>
         </div>
     </div>
     <div id="map"></div>
@@ -103,12 +144,45 @@
             }
             const cols = [['counts', ...counts]];
             if (!distributionChart && window.c3) {
-                distributionChart = c3.generate({
-                    bindto: '#distribution-chart',
-                    data: { columns: cols, type: 'bar' },
-                    axis: { x: { type: 'category', categories: labels } },
-                    size: { height: 140 }
-                });
+             distributionChart = c3.generate({
+                 bindto: '#distribution-chart',
+                 data: {
+                    columns: cols,
+                    type: 'bar'
+                },
+
+            color: {
+                pattern: ['#3b28cc']
+              },
+                 axis: {
+                     x: {
+                        type: 'category',
+                        categories: labels,
+                        tick: {
+                            rotate: 0,
+                            multiline: false
+              }
+        },
+        y: {
+            tick: {
+                format: d3.format("d")
+            }
+        }
+    },
+    grid: {
+        y: {
+            show: true
+        }
+    },
+    size: {
+        height: 200
+    },
+    bar: {
+        width: {
+            ratio: 0.6
+        }
+    }
+});
             } else if (distributionChart) {
                 distributionChart.load({ columns: cols });
                 distributionChart.axis.categories = labels;
