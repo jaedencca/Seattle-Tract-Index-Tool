@@ -28,6 +28,8 @@
     </style>
     <script src="https://api.mapbox.com/mapbox-gl-js/v2.8.1/mapbox-gl.js"></script>
     <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <script src="js/d3.js"></script>
+    <script src="js/c3.min.js"></script>
 </head>
 
 <body>
@@ -38,13 +40,21 @@
             <div style="font-weight: bold; margin-bottom: 10px;">Adjust Weights</div>
             <div class="weight-item">
                 <div class="weight-label">Transit (Bus Stops)</div>
-                <input type="range" id="transit-weight" class="weight-slider" min="0" max="100" value="50">
+                <input type="range" id="transit-weight" class="weight-slider" min="0" max="100" value="33">
             </div>
             <div class="weight-item">
                 <div class="weight-label">Parks & Recreation</div>
-                <input type="range" id="parks-weight" class="weight-slider" min="0" max="100" value="50">
+                <input type="range" id="parks-weight" class="weight-slider" min="0" max="100" value="33">
             </div>
-            <button class="reset-btn" id="reset-weights">Reset (50/50)</button>
+            <div class="weight-item">
+                <div class="weight-label">Food Availability</div>
+                <input type="range" id="food-weight" class="weight-slider" min="0" max="100" value="34">
+            </div>
+            <button class="reset-btn" id="reset-weights">Reset</button>
+        </div>
+        <div class="weight-panel" id="distribution-panel" style="margin-top:10px;">
+            <div style="font-weight: bold; margin-bottom: 8px;">Tract Distribution</div>
+            <div id="distribution-chart" style="height:140px;"></div>
         </div>
     </div>
     <div id="map"></div>
@@ -67,9 +77,43 @@
         // Color scale for accessibility index
         const colors = ['#e6f2ff', '#99ccff', '#4da6ff', '#0052cc', '#003d99'];
         const breaks = [0, 20, 40, 60, 80, 100];
-        
-        let weights = { transit: 50, parks: 50 };
+
+        // state
+        const weights = { transit: 33, parks: 33, food: 34 };
         let tractsDataGlobal = null;
+
+        // cached DOM nodes
+        const metricsEl = document.getElementById('metrics');
+        const legendContentEl = document.getElementById('legend-content');
+        let distributionChart = null;
+
+        function renderDistribution(tractsData) {
+            const bins = 10;
+            const counts = new Array(bins).fill(0);
+            for (const t of tractsData.features) {
+                const v = Math.max(0, Math.min(100, t.properties.compositeIndex || 0));
+                const idx = Math.min(bins - 1, Math.floor(v / (100 / bins)));
+                counts[idx]++;
+            }
+            const labels = [];
+            for (let i = 0; i < bins; i++) {
+                const lo = i * (100 / bins);
+                const hi = lo + (100 / bins) - 1;
+                labels.push(`${Math.round(lo)}-${Math.round(hi)}`);
+            }
+            const cols = [['counts', ...counts]];
+            if (!distributionChart && window.c3) {
+                distributionChart = c3.generate({
+                    bindto: '#distribution-chart',
+                    data: { columns: cols, type: 'bar' },
+                    axis: { x: { type: 'category', categories: labels } },
+                    size: { height: 140 }
+                });
+            } else if (distributionChart) {
+                distributionChart.load({ columns: cols });
+                distributionChart.axis.categories = labels;
+            }
+        }
 
         async function loadData() {
             try {
@@ -81,55 +125,58 @@
                 const tractsData = await tractsRes.json();
                 const busStopsData = await busRes.json();
                 
-                const lines = (await parksRes.text()).split('\n');
-                const parksFeatures = [];
-                for (let i = 1; i < lines.length; i++) {
-                    if (!lines[i].trim()) continue;
+                // parse parks CSV into point features (simple CSV parser for quoted fields)
+                const parksText = await parksRes.text();
+                const parksLines = parksText.split('\n');
+                const parseCSVLine = (line) => {
                     const regex = /"([^"]*)"|([^,]+)/g;
-                    const values = [];
-                    let match;
-                    while ((match = regex.exec(lines[i])) !== null) {
-                        values.push(match[1] !== undefined ? match[1] : match[2]);
-                    }
-                    if (values.length >= 7) {
-                        const lon = parseFloat(values[5]), lat = parseFloat(values[6]);
-                        if (!isNaN(lon) && !isNaN(lat)) {
-                            parksFeatures.push({type: 'Feature', geometry: {type: 'Point', coordinates: [lon, lat]}, properties: {name: values[2]}});
-                        }
-                    }
+                    const out = [];
+                    let m;
+                    while ((m = regex.exec(line)) !== null) out.push(m[1] !== undefined ? m[1] : m[2]);
+                    return out;
+                };
+                const parksFeatures = [];
+                for (let i = 1; i < parksLines.length; i++) {
+                    const line = parksLines[i].trim();
+                    if (!line) continue;
+                    const vals = parseCSVLine(line);
+                    const lon = parseFloat(vals[5]), lat = parseFloat(vals[6]);
+                    if (!isNaN(lon) && !isNaN(lat)) parksFeatures.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: { name: vals[2] } });
                 }
-                const parksData = {type: 'FeatureCollection', features: parksFeatures};
+                const parksData = { type: 'FeatureCollection', features: parksFeatures };
                 
+                // compute densities and maxima in a single pass
                 let maxBusStopDensity = 0, maxParksDensity = 0;
-                tractsData.features.forEach(tract => {
+                for (const tract of tractsData.features) {
                     const busStopsInTract = turf.pointsWithinPolygon(busStopsData, tract);
                     const parksInTract = turf.pointsWithinPolygon(parksData, tract);
                     const landSqMiles = (tract.properties.LAND_ACRES || 0) / 640;
                     const busDensity = landSqMiles > 0 ? busStopsInTract.features.length / landSqMiles : 0;
                     const parksDensity = landSqMiles > 0 ? parksInTract.features.length / landSqMiles : 0;
-                    maxBusStopDensity = Math.max(maxBusStopDensity, busDensity);
-                    maxParksDensity = Math.max(maxParksDensity, parksDensity);
+                    if (busDensity > maxBusStopDensity) maxBusStopDensity = busDensity;
+                    if (parksDensity > maxParksDensity) maxParksDensity = parksDensity;
                     tract.properties.busStopCount = busStopsInTract.features.length;
                     tract.properties.busStopDensity = Math.round(busDensity * 10) / 10;
                     tract.properties.parksCount = parksInTract.features.length;
                     tract.properties.parksDensity = Math.round(parksDensity * 10) / 10;
                     tract.properties.landSqMiles = Math.round(landSqMiles * 100) / 100;
-                });
+                }
                 tractsData.maxBusStopDensity = maxBusStopDensity;
                 tractsData.maxParksDensity = maxParksDensity;
                 calculateCompositeIndex(tractsData);
                 tractsDataGlobal = tractsData;
 
                 map.on('load', () => {
-                    map.addSource('tracts', {type: 'geojson', data: tractsData});
-                    map.addLayer({id: 'tracts-fill', type: 'fill', source: 'tracts', paint: {'fill-color': ['step', ['get', 'compositeIndex'], colors[0], breaks[1], colors[1], breaks[2], colors[2], breaks[3], colors[3], breaks[4], colors[4]], 'fill-opacity': 0.75}});
-                    map.addLayer({id: 'tracts-outline', type: 'line', source: 'tracts', paint: {'line-color': '#999', 'line-width': 1, 'line-opacity': 0.3}});
+                    map.addSource('tracts', { type: 'geojson', data: tractsData });
+                    map.addLayer({ id: 'tracts-fill', type: 'fill', source: 'tracts', paint: { 'fill-color': ['step', ['get', 'compositeIndex'], colors[0], breaks[1], colors[1], breaks[2], colors[2], breaks[3], colors[3], breaks[4], colors[4]], 'fill-opacity': 0.75 } });
+                    map.addLayer({ id: 'tracts-outline', type: 'line', source: 'tracts', paint: { 'line-color': '#999', 'line-width': 1, 'line-opacity': 0.3 } });
                     map.on('click', 'tracts-fill', (e) => {
                         const p = e.features[0].properties;
-                        new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(`<strong>${p.NAME}</strong><br>Index: ${p.compositeIndex}/100<br>Transit: ${p.busScore}/100 | Parks: ${p.parksScore}/100`).addTo(map);
+                        new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(`<strong>${p.NAME}</strong><br>Index: ${p.compositeIndex}/100<br>Transit: ${p.busScore}/100 | Parks: ${p.parksScore}/100 | Food: ${p.foodScore}/100`).addTo(map);
                     });
                     generateLegend();
                     updateMetrics(tractsData);
+                    renderDistribution(tractsData);
                     setupWeightControls();
                 });
             } catch (error) {
@@ -141,63 +188,75 @@
             const labels = ['0-20', '20-40', '40-60', '60-80', '80-100'];
             let html = '';
             for (let i = 0; i < colors.length; i++) html += `<div class="legend-item"><span class="legend-color" style="background: ${colors[i]}"></span> ${labels[i]}</div>`;
-            document.getElementById('legend-content').innerHTML = html;
+            legendContentEl.innerHTML = html;
         }
 
         function updateMetrics(tractsData) {
-            let total = 0, buses = 0, parks = 0;
-            tractsData.features.forEach(tract => {
-                total += tract.properties.compositeIndex;
-                buses += tract.properties.busStopCount;
-                parks += tract.properties.parksCount;
-            });
+            let total = 0, buses = 0, parks = 0, totalFood = 0, hasFoodData = false;
+            for (const tract of tractsData.features) {
+                total += tract.properties.compositeIndex || 0;
+                buses += tract.properties.busStopCount || 0;
+                parks += tract.properties.parksCount || 0;
+                const fs = tract.properties.foodScore || 0;
+                if (fs > 0) hasFoodData = true;
+                totalFood += fs;
+            }
             const avg = Math.round(total / tractsData.features.length);
-            document.getElementById('metrics').innerHTML = `<div class="metric"><div class="metric-label">City Average</div><div class="metric-value">${avg}/100</div></div><div class="metric"><div class="metric-label">Bus Stops</div><div class="metric-value">${buses}</div></div><div class="metric"><div class="metric-label">Parks</div><div class="metric-value">${parks}</div></div>`;
+            const avgFood = hasFoodData ? Math.round(totalFood / tractsData.features.length) : (document.getElementById('food-index-slider') ? parseInt(document.getElementById('food-index-slider').value) : 0);
+            metricsEl.innerHTML = `<div class="metric"><div class="metric-label">City Average</div><div class="metric-value">${avg}/100</div></div><div class="metric"><div class="metric-label">Bus Stops</div><div class="metric-value">${buses}</div></div><div class="metric"><div class="metric-label">Parks</div><div class="metric-value">${parks}</div></div><div class="metric"><div class="metric-label">Food Score</div><div class="metric-value">${avgFood}/100</div></div>`;
         }
 
         function calculateCompositeIndex(tractsData) {
             const maxBusStopDensity = tractsData.maxBusStopDensity || 1;
             const maxParksDensity = tractsData.maxParksDensity || 1;
-            tractsData.features.forEach(tract => {
+            const totalWeight = (weights.transit || 0) + (weights.parks || 0) + (weights.food || 0) || 1;
+            const hasFoodData = tractsData.features.some(t => (t.properties && t.properties.foodScore) > 0);
+            const sliderVal = (document.getElementById('food-index-slider') && !hasFoodData) ? parseInt(document.getElementById('food-index-slider').value) : 0;
+            for (const tract of tractsData.features) {
                 const busDensity = tract.properties.busStopDensity || 0;
                 const parksDensity = tract.properties.parksDensity || 0;
                 const busScore = maxBusStopDensity > 0 ? (busDensity / maxBusStopDensity) * 100 : 0;
                 const parksScore = maxParksDensity > 0 ? (parksDensity / maxParksDensity) * 100 : 0;
-                const totalWeight = weights.transit + weights.parks;
-                const compositeIndex = Math.round((busScore * weights.transit + parksScore * weights.parks) / totalWeight);
+                const foodScore = hasFoodData ? (tract.properties.foodScore || 0) : sliderVal;
+                const compositeIndex = Math.round((busScore * weights.transit + parksScore * weights.parks + foodScore * weights.food) / totalWeight);
                 tract.properties.busScore = Math.round(busScore);
                 tract.properties.parksScore = Math.round(parksScore);
+                tract.properties.foodScore = Math.round(foodScore);
                 tract.properties.compositeIndex = compositeIndex;
-            });
+            }
         }
         
         function setupWeightControls() {
             const transitSlider = document.getElementById('transit-weight');
             const parksSlider = document.getElementById('parks-weight');
+            const foodSlider = document.getElementById('food-weight');
+            const foodIndexSlider = document.getElementById('food-index-slider');
+            const foodIndexValueSpan = document.getElementById('food-index-value');
             const update = () => {
                 const t = parseInt(transitSlider.value);
                 const p = parseInt(parksSlider.value);
+                const f = parseInt(foodSlider.value);
                 weights.transit = t;
                 weights.parks = p;
+                weights.food = f;
                 if (tractsDataGlobal && map.getSource('tracts')) {
                     calculateCompositeIndex(tractsDataGlobal);
                     map.getSource('tracts').setData(tractsDataGlobal);
                     updateMetrics(tractsDataGlobal);
+                    renderDistribution(tractsDataGlobal);
                 }
             };
-            transitSlider.addEventListener('input', (e) => {
-                parksSlider.value = 100 - parseInt(e.target.value);
-                update();
-            });
-            parksSlider.addEventListener('input', (e) => {
-                transitSlider.value = 100 - parseInt(e.target.value);
-                update();
-            });
+            transitSlider.addEventListener('input', update);
+            parksSlider.addEventListener('input', update);
+            foodSlider.addEventListener('input', update);
+            if (foodIndexSlider) {
+                foodIndexValueSpan.textContent = foodIndexSlider.value;
+                foodIndexSlider.addEventListener('input', () => { foodIndexValueSpan.textContent = foodIndexSlider.value; update(); });
+            }
             document.getElementById('reset-weights').addEventListener('click', () => {
-                transitSlider.value = 50;
-                parksSlider.value = 50;
-                weights.transit = 50;
-                weights.parks = 50;
+                transitSlider.value = 33; parksSlider.value = 33; foodSlider.value = 34;
+                weights.transit = 33; weights.parks = 33; weights.food = 34;
+                if (foodIndexSlider) { foodIndexSlider.value = 0; foodIndexValueSpan.textContent = '0'; }
                 update();
             });
         }
