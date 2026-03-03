@@ -24,5 +24,5 @@ Users can adjust the weight of each metric using sliders to dynamically recalcul
    - C3.js (D3-based charting)
    - HTML / CSS / JavaScript
 
-Live Demo
+[Live Demo](https://jaedencca.github.io/Seattle-Tract-Index-Tool/)
 
