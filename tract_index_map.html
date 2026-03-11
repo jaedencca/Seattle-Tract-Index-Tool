@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Seattle Census Tracts - Accessibility Index</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.8.1/mapbox-gl.css" rel="stylesheet">
+    <link rel="stylesheet" href="css/c3.min.css">
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial; background: white; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+        #info { position: absolute; width: 400px; top: 10px; left: 10px; padding: 15px; background: #f5f5f5; color: #333; border: 1px solid #ccc; max-height: 85vh; overflow-y: auto; z-index: 1000; }
+        #title { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+        #desc { font-size: 12px; margin-bottom: 10px; }
+        .metric { padding: 8px; margin: 5px 0; background: white; border: 1px solid #ddd; }
+        .metric-label { font-weight: bold; font-size: 12px; }
+        .metric-value { font-size: 13px; color: #0052cc; }
+        .weight-panel { margin-top: 15px; padding: 10px; background: white; border: 1px solid #ddd; }
+        .weight-item { margin: 10px 0; }
+        .weight-label { font-size: 12px; margin-bottom: 3px; }
+        .weight-slider { width: 100%; }
+        .reset-btn { width: 100%; padding: 6px; background: #0052cc; color: white; border: none; cursor: pointer; font-size: 12px; margin-top: 10px; }
+        #legend { position: absolute; bottom: 20px; right: 10px; padding: 10px; background: #f5f5f5; border: 1px solid #ccc; }
+        .legend-item { margin: 3px 0; font-size: 11px; }
+        .legend-color { width: 20px; height: 12px; display: inline-block; margin-right: 5px; border: 1px solid #999; }
+        .mapboxgl-popup-content { font-size: 12px; }
+    </style>
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.8.1/mapbox-gl.js"></script>
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <script src="js/d3.js"></script>
+    <script src="js/c3.min.js"></script>
+</head>
+
+<body>
+    <div id="info">
+        <div style="font-size:20px; font-weight:700; margin-bottom:4px;">
+             Seattle Livability Dashboard
+        </div>
+        <div style="font-size:12px; color:#666; margin-bottom:12px;">
+             Visualize census tract livability scores based on transit, parks, and food access
+        </div>
+        <div style="
+            background:#e6e6fa;
+            color:#333;
+            padding:8px 12px;
+            border-radius:20px;
+            font-size:11px;
+            margin-bottom:12px;">
+            Hover over census tracts to see composite scores. Click a tract to view detailed metrics and adjust weights using the sliders.
+        </div>
+
+        <div id="title">Accessibility Index</div>
+        <div id="metrics"></div>
+        <div class="weight-panel">
+            <div style="font-weight: bold; margin-bottom: 10px;">Adjust Weights</div>
+            <div class="weight-item">
+                <div class="weight-label">Transit (Bus Stops)</div>
+                <input type="range" id="transit-weight" class="weight-slider" min="0" max="100" value="33">
+            </div>
+            <div class="weight-item">
+                <div class="weight-label">Parks & Recreation</div>
+                <input type="range" id="parks-weight" class="weight-slider" min="0" max="100" value="33">
+            </div>
+            <div class="weight-item">
+                <div class="weight-label">Food Availability</div>
+                <input type="range" id="food-weight" class="weight-slider" min="0" max="100" value="34">
+            </div>
+            <button class="reset-btn" id="reset-weights">Reset</button>
+        </div>
+        <div class="weight-panel" id="distribution-panel" style="margin-top:10px; box-shadow:0 3px 10px rgba(0,0,0,0.15); border-radius:6px;">
+            <div style="font-weight:600; font-size:14px; margin-bottom:4px;">
+                Score Distribution Of The Selected Tract
+        </div>
+        <div style="font-size:11px; color:#777; margin-bottom:10px;">
+            Distribution of composite scores across Seattle tracts
+        </div>
+            <div id="distribution-chart" style="height:140px;"></div>
+        </div>
+        <div class="weight-panel" style="margin-top:15px;">
+            <div style="font-weight:600; font-size:14px; margin-bottom:10px;">
+                About Dashboard
+            </div>
+
+            <div style="font-size:12px; margin-bottom:10px;">
+                 <span style="color:#2f5cff; font-weight:600;">Transit Availability</span><br>
+                 Measures access to bus stops, walkability scores, and bike lane infrastructure within each census tract.
+             </div>
+
+             <div style="font-size:12px; margin-bottom:10px;">
+                 <span style="color:#2ca02c; font-weight:600;">Park Availability</span><br>
+                 Measures the presence and quality of parks, green spaces, and recreational amenities in the area.
+             </div>
+
+             <div style="font-size:12px;">
+                 <span style="color:#d62728; font-weight:600;">Food Availability</span><br>
+                 Measures proximity to grocery stores and considers food prices in the area.
+              </div>
+        </div>
+    </div>
+    <div id="map"></div>
+    <div id="legend">
+        <div style="font-weight: bold; margin-bottom: 5px;">Accessibility Score</div>
+        <div id="legend-content"></div>
+    </div>
+    <script>
+        // Mapbox access token
+        mapboxgl.accessToken = 'pk.eyJ1IjoiamFlZGVuY2NhIiwiYSI6ImNtaGM4cDNxdDI3cHkya3B1emRxYzJuNWQifQ.GD3_Rhp6YQw5CkRSFClT0w';
+
+        // Initialize map
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/light-v10',
+            zoom: 11,
+            center: [-122.3321, 47.6062]
+        });
+
+        // Color scale for accessibility index
+        const colors = ['#e6f2ff', '#99ccff', '#4da6ff', '#0052cc', '#003d99'];
+        const breaks = [0, 20, 40, 60, 80, 100];
+
+        // state
+        const weights = { transit: 33, parks: 33, food: 34 };
+        let tractsDataGlobal = null;
+
+        // cached DOM nodes
+        const metricsEl = document.getElementById('metrics');
+        const legendContentEl = document.getElementById('legend-content');
+        let distributionChart = null;
+
+        function renderDistribution(tractsData) {
+            const bins = 10;
+            const counts = new Array(bins).fill(0);
+            for (const t of tractsData.features) {
+                const v = Math.max(0, Math.min(100, t.properties.compositeIndex || 0));
+                const idx = Math.min(bins - 1, Math.floor(v / (100 / bins)));
+                counts[idx]++;
+            }
+            const labels = [];
+            for (let i = 0; i < bins; i++) {
+                const lo = i * (100 / bins);
+                const hi = lo + (100 / bins) - 1;
+                labels.push(`${Math.round(lo)}-${Math.round(hi)}`);
+            }
+            const cols = [['counts', ...counts]];
+            if (!distributionChart && window.c3) {
+             distributionChart = c3.generate({
+                 bindto: '#distribution-chart',
+                 data: {
+                    columns: cols,
+                    type: 'bar'
+                },
+
+            color: {
+                pattern: ['#3b28cc']
+              },
+                 axis: {
+                     x: {
+                        type: 'category',
+                        categories: labels,
+                        tick: {
+                            rotate: 0,
+                            multiline: false
+              }
+        },
+        y: {
+            tick: {
+                format: d3.format("d")
+            }
+        }
+    },
+    grid: {
+        y: {
+            show: true
+        }
+    },
+    size: {
+        height: 200
+    },
+    bar: {
+        width: {
+            ratio: 0.6
+        }
+    }
+});
+            } else if (distributionChart) {
+                distributionChart.load({ columns: cols });
+                distributionChart.axis.categories = labels;
+            }
+        }
+
+        async function loadData() {
+            try {
+                const [tractsRes, busRes, parksRes] = await Promise.all([
+                    fetch('assets/2020_Census_Tracts_Seattle_-8436267939808112280.geojson'),
+                    fetch('assets/Seattle_bus_stops.geojson'),
+                    fetch('assets/Seattle_Parks_And_Recreation_Park_Addresses_20260302.csv')
+                ]);
+                const tractsData = await tractsRes.json();
+                const busStopsData = await busRes.json();
+                
+                // parse parks CSV into point features (simple CSV parser for quoted fields)
+                const parksText = await parksRes.text();
+                const parksLines = parksText.split('\n');
+                const parseCSVLine = (line) => {
+                    const regex = /"([^"]*)"|([^,]+)/g;
+                    const out = [];
+                    let m;
+                    while ((m = regex.exec(line)) !== null) out.push(m[1] !== undefined ? m[1] : m[2]);
+                    return out;
+                };
+                const parksFeatures = [];
+                for (let i = 1; i < parksLines.length; i++) {
+                    const line = parksLines[i].trim();
+                    if (!line) continue;
+                    const vals = parseCSVLine(line);
+                    const lon = parseFloat(vals[5]), lat = parseFloat(vals[6]);
+                    if (!isNaN(lon) && !isNaN(lat)) parksFeatures.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: { name: vals[2] } });
+                }
+                const parksData = { type: 'FeatureCollection', features: parksFeatures };
+                
+                // compute densities and maxima in a single pass
+                let maxBusStopDensity = 0, maxParksDensity = 0;
+                for (const tract of tractsData.features) {
+                    const busStopsInTract = turf.pointsWithinPolygon(busStopsData, tract);
+                    const parksInTract = turf.pointsWithinPolygon(parksData, tract);
+                    const landSqMiles = (tract.properties.LAND_ACRES || 0) / 640;
+                    const busDensity = landSqMiles > 0 ? busStopsInTract.features.length / landSqMiles : 0;
+                    const parksDensity = landSqMiles > 0 ? parksInTract.features.length / landSqMiles : 0;
+                    if (busDensity > maxBusStopDensity) maxBusStopDensity = busDensity;
+                    if (parksDensity > maxParksDensity) maxParksDensity = parksDensity;
+                    tract.properties.busStopCount = busStopsInTract.features.length;
+                    tract.properties.busStopDensity = Math.round(busDensity * 10) / 10;
+                    tract.properties.parksCount = parksInTract.features.length;
+                    tract.properties.parksDensity = Math.round(parksDensity * 10) / 10;
+                    tract.properties.landSqMiles = Math.round(landSqMiles * 100) / 100;
+                }
+                tractsData.maxBusStopDensity = maxBusStopDensity;
+                tractsData.maxParksDensity = maxParksDensity;
+                calculateCompositeIndex(tractsData);
+                tractsDataGlobal = tractsData;
+
+                map.on('load', () => {
+                    map.addSource('tracts', { type: 'geojson', data: tractsData });
+                    map.addLayer({ id: 'tracts-fill', type: 'fill', source: 'tracts', paint: { 'fill-color': ['step', ['get', 'compositeIndex'], colors[0], breaks[1], colors[1], breaks[2], colors[2], breaks[3], colors[3], breaks[4], colors[4]], 'fill-opacity': 0.75 } });
+                    map.addLayer({ id: 'tracts-outline', type: 'line', source: 'tracts', paint: { 'line-color': '#999', 'line-width': 1, 'line-opacity': 0.3 } });
+                    map.on('click', 'tracts-fill', (e) => {
+                        const p = e.features[0].properties;
+                        new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(`<strong>${p.NAME}</strong><br>Index: ${p.compositeIndex}/100<br>Transit: ${p.busScore}/100 | Parks: ${p.parksScore}/100 | Food: ${p.foodScore}/100`).addTo(map);
+                    });
+                    generateLegend();
+                    updateMetrics(tractsData);
+                    renderDistribution(tractsData);
+                    setupWeightControls();
+                });
+            } catch (error) {
+                console.error('Error loading data:', error);
+            }
+        }
+
+        function generateLegend() {
+            const labels = ['0-20', '20-40', '40-60', '60-80', '80-100'];
+            let html = '';
+            for (let i = 0; i < colors.length; i++) html += `<div class="legend-item"><span class="legend-color" style="background: ${colors[i]}"></span> ${labels[i]}</div>`;
+            legendContentEl.innerHTML = html;
+        }
+
+        function updateMetrics(tractsData) {
+            let total = 0, buses = 0, parks = 0, totalFood = 0, hasFoodData = false;
+            for (const tract of tractsData.features) {
+                total += tract.properties.compositeIndex || 0;
+                buses += tract.properties.busStopCount || 0;
+                parks += tract.properties.parksCount || 0;
+                const fs = tract.properties.foodScore || 0;
+                if (fs > 0) hasFoodData = true;
+                totalFood += fs;
+            }
+            const avg = Math.round(total / tractsData.features.length);
+            const avgFood = hasFoodData ? Math.round(totalFood / tractsData.features.length) : (document.getElementById('food-index-slider') ? parseInt(document.getElementById('food-index-slider').value) : 0);
+            metricsEl.innerHTML = `<div class="metric"><div class="metric-label">City Average</div><div class="metric-value">${avg}/100</div></div><div class="metric"><div class="metric-label">Bus Stops</div><div class="metric-value">${buses}</div></div><div class="metric"><div class="metric-label">Parks</div><div class="metric-value">${parks}</div></div><div class="metric"><div class="metric-label">Food Score</div><div class="metric-value">${avgFood}/100</div></div>`;
+        }
+
+        function calculateCompositeIndex(tractsData) {
+            const maxBusStopDensity = tractsData.maxBusStopDensity || 1;
+            const maxParksDensity = tractsData.maxParksDensity || 1;
+            const totalWeight = (weights.transit || 0) + (weights.parks || 0) + (weights.food || 0) || 1;
+            const hasFoodData = tractsData.features.some(t => (t.properties && t.properties.foodScore) > 0);
+            const sliderVal = (document.getElementById('food-index-slider') && !hasFoodData) ? parseInt(document.getElementById('food-index-slider').value) : 0;
+            for (const tract of tractsData.features) {
+                const busDensity = tract.properties.busStopDensity || 0;
+                const parksDensity = tract.properties.parksDensity || 0;
+                const busScore = maxBusStopDensity > 0 ? (busDensity / maxBusStopDensity) * 100 : 0;
+                const parksScore = maxParksDensity > 0 ? (parksDensity / maxParksDensity) * 100 : 0;
+                const foodScore = hasFoodData ? (tract.properties.foodScore || 0) : sliderVal;
+                const compositeIndex = Math.round((busScore * weights.transit + parksScore * weights.parks + foodScore * weights.food) / totalWeight);
+                tract.properties.busScore = Math.round(busScore);
+                tract.properties.parksScore = Math.round(parksScore);
+                tract.properties.foodScore = Math.round(foodScore);
+                tract.properties.compositeIndex = compositeIndex;
+            }
+        }
+        
+        function setupWeightControls() {
+            const transitSlider = document.getElementById('transit-weight');
+            const parksSlider = document.getElementById('parks-weight');
+            const foodSlider = document.getElementById('food-weight');
+            const foodIndexSlider = document.getElementById('food-index-slider');
+            const foodIndexValueSpan = document.getElementById('food-index-value');
+            const update = () => {
+                const t = parseInt(transitSlider.value);
+                const p = parseInt(parksSlider.value);
+                const f = parseInt(foodSlider.value);
+                weights.transit = t;
+                weights.parks = p;
+                weights.food = f;
+                if (tractsDataGlobal && map.getSource('tracts')) {
+                    calculateCompositeIndex(tractsDataGlobal);
+                    map.getSource('tracts').setData(tractsDataGlobal);
+                    updateMetrics(tractsDataGlobal);
+                    renderDistribution(tractsDataGlobal);
+                }
+            };
+            transitSlider.addEventListener('input', update);
+            parksSlider.addEventListener('input', update);
+            foodSlider.addEventListener('input', update);
+            if (foodIndexSlider) {
+                foodIndexValueSpan.textContent = foodIndexSlider.value;
+                foodIndexSlider.addEventListener('input', () => { foodIndexValueSpan.textContent = foodIndexSlider.value; update(); });
+            }
+            document.getElementById('reset-weights').addEventListener('click', () => {
+                transitSlider.value = 33; parksSlider.value = 33; foodSlider.value = 34;
+                weights.transit = 33; weights.parks = 33; weights.food = 34;
+                if (foodIndexSlider) { foodIndexSlider.value = 0; foodIndexValueSpan.textContent = '0'; }
+                update();
+            });
+        }
+
+        // Load the data
+        loadData();
+    </script>
+</body>
+
+</html>
