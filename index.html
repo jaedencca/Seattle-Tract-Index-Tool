@@ -25,6 +25,7 @@
             .legend-item { margin: 3px 0; font-size: 11px; }
             .legend-color { width: 20px; height: 12px; display: inline-block; margin-right: 5px; border: 1px solid #999; }
             .mapboxgl-popup-content { font-size: 12px; }
+            #tract-detail {position: absolute; top: 10px; right: 10px; width: 280px; max-height: 80vh; overflow-y: auto; padding: 15px; background: white; border: 1px solid #ccc; box-shadow: 0 2px 8px rgba(0,0,0,0.15); font-family: Arial; font-size: 12px;}
         </style>
         <script src="https://api.mapbox.com/mapbox-gl-js/v2.8.1/mapbox-gl.js"></script>
         <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
@@ -103,6 +104,39 @@
             <div style="font-weight: bold; margin-bottom: 5px;">Accessibility Score</div>
             <div id="legend-content"></div>
         </div>
+        <div id="tract-detail" style="display: none; margin-top: 15px;">
+
+            <div style="text-align:right; margin-bottom: 8px;">
+                <span onclick="document.getElementById('tract-detail').style.display='none'"
+                    style="cursor:pointer; font-size:16px; color: #999; font-weight: bold;">x</span>
+            </div>
+            <div id="tract-name" style="font-weight: 700; font-size: 15px; margin-bottom: 12px; color: #0052cc;">
+                <!-- filled by js code -->
+            </div>
+
+            <div id="tract-comp" style="
+            background: #0052cc;
+            color: white;
+            text-align: center;
+            padding: 14px;
+            border-radius: 6px;
+            margin-bottom: 14px;">
+            <!-- content filled by js -->
+            </div>
+
+            <div id="tract-metrics" style="margin-bottom: 14px;">
+                <!-- filled by js -->
+            </div>
+
+            <div id="tract-footer" style="
+            font-size: 10px;
+            color: #777;
+            border-top: 1px solid #ddd;
+            padding-top: 10px;
+            line-height: 1.6;">
+            <!-- filled by js -->
+            </div>
+        </div>
         <script>
             // Mapbox access token
             mapboxgl.accessToken = 'pk.eyJ1IjoiamFlZGVuY2NhIiwiYSI6ImNtaGM4cDNxdDI3cHkya3B1emRxYzJuNWQifQ.GD3_Rhp6YQw5CkRSFClT0w';
@@ -129,7 +163,7 @@
             let distributionChart = null;
 
             function renderDistribution(tractsData) {
-                const bins = 10;
+                const bins = 5;
                 const counts = new Array(bins).fill(0);
                 for (const t of tractsData.features) {
                     const v = Math.max(0, Math.min(100, t.properties.compositeIndex || 0));
@@ -258,8 +292,68 @@
                         map.addLayer({ id: 'tracts-fill', type: 'fill', source: 'tracts', paint: { 'fill-color': ['step', ['get', 'compositeIndex'], colors[0], breaks[1], colors[1], breaks[2], colors[2], breaks[3], colors[3], breaks[4], colors[4]], 'fill-opacity': 0.75 } });
                         map.addLayer({ id: 'tracts-outline', type: 'line', source: 'tracts', paint: { 'line-color': '#999', 'line-width': 1, 'line-opacity': 0.3 } });
                         map.on('click', 'tracts-fill', (e) => {
+
                             const p = e.features[0].properties;
-                            new mapboxgl.Popup().setLngLat(e.lngLat).setHTML(`<strong>${p.NAME}</strong><br>Index: ${p.compositeIndex}/100<br>Transit: ${p.busScore}/100 | Parks: ${p.parksScore}/100 | Food: ${p.foodScore}/100`).addTo(map);
+
+                            document.getElementById('tract-detail').style.display = 'block';
+                            console.log(p);
+                            document.getElementById('tract-name').textContent = 'Census Tract: ' + parseFloat(p.OBJECTID).toString();
+                            document.getElementById('tract-comp').innerHTML = `
+                                <div style="font-size:10px; opacity:0.8; margin-bottom:4px;">COMPOSITE SCORE</div>
+                                <div style="font-size:40px; font-weight:700; line-height:1;">${p.compositeIndex}</div>
+                                <div style="font-size:12px; opacity:0.7;">out of 100</div>
+                            `;
+
+                            const totalW = weights.transit + weights.parks + weights.food;
+                            const transitPct = Math.round((weights.transit / totalW)*100);
+                            const parksPct = Math.round((weights.parks / totalW)*100);
+                            const foodPct = Math.round((weights.food / totalW)*100);
+
+                            document.getElementById('tract-metrics').innerHTML = `
+                                <div style="margin-bottom:10px;">
+                                    <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+                                        <span style="color:#2f5cff; font-weight:600;">Transit</span>
+                                        <span>${p.busScore}/100 &nbsp;·&nbsp; ${transitPct}% of weight</span>
+                                    </div>
+                                    <div style="background:#eee; height:6px; border-radius:3px;">
+                                        <div style="background:#2f5cff; width:${p.busScore}%; height:6px; border-radius:3px;"></div>
+                                    </div>
+                                </div>
+
+                                <div style="margin-bottom:10px;">
+                                    <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+                                        <span style="color:#2ca02c; font-weight:600;">Parks</span>
+                                        <span>${p.parksScore}/100 &nbsp;·&nbsp; ${parksPct}% of weight</span>
+                                    </div>
+                                    <div style="background:#eee; height:6px; border-radius:3px;">
+                                        <div style="background:#2ca02c; width:${p.parksScore}%; height:6px; border-radius:3px;"></div>
+                                    </div>
+                                </div>
+
+                                <div style="margin-bottom:10px;">
+                                    <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+                                        <span style="color:#d62728; font-weight:600;">Food Access</span>
+                                        <span>${p.foodScore}/100 &nbsp;·&nbsp; ${foodPct}% of weight</span>
+                                    </div>
+                                    <div style="background:#eee; height:6px; border-radius:3px;">
+                                        <div style="background:#d62728; width:${p.foodScore}%; height:6px; border-radius:3px;"></div>
+                                    </div>
+                                </div>
+
+                            `;
+
+                            document.getElementById('tract-footer').innerHTML = `
+                                <strong>How was this score calculated?</strong><br><br>
+                                This tract scored <strong>${p.compositeIndex} out of 100</strong> overall.
+                                That score was built by combining three measurements:<br><br>
+                                Transit counted for <strong>${transitPct}%</strong> of the final score,
+                                and this tract scored <strong>${p.busScore}/100</strong> on transit access.<br>
+                                Parks counted for <strong>${parksPct}%</strong>, scoring <strong>${p.parksScore}/100</strong>.<br>
+                                Food access counted for <strong>${foodPct}%</strong>, scoring <strong>${p.foodScore}/100</strong>.<br><br>
+                                Each score compares this tract to the highest performing tract in Seattle.
+                                so a score of 50 means this tract has half the density of the best tract in the city.
+                            `;
+
                         });
                         generateLegend();
                         updateMetrics(tractsData);
@@ -287,7 +381,7 @@
                     totalFood += tract.properties.foodCount || 0;
                 }
                 const avg = Math.round(total / tractsData.features.length);
-                const avgFood = Math.round(totalFood / tractsData.features.length);
+                const avgFood = Math.round(totalFood / tractsData.features.length)
 
                 metricsEl.innerHTML =
                 `<div class="metric"><div class="metric-label">City Average</div><div class="metric-value">${avg}/100</div></div>
