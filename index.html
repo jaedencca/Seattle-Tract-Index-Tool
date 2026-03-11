@@ -48,10 +48,10 @@
                 border-radius:20px;
                 font-size:11px;
                 margin-bottom:12px;">
-                Hover over census tracts to see composite scores. Click a tract to view detailed metrics and adjust weights using the sliders.
+                 Click a tract to view detailed metrics and adjust weights using the sliders.
             </div>
 
-            <div id="title">Accessibility Index</div>
+            <div id="title">Data points used </div>
             <div id="metrics"></div>
             <div class="weight-panel">
                 <div style="font-weight: bold; margin-bottom: 10px;">Adjust Weights</div>
@@ -96,6 +96,10 @@
                 <div style="font-size:12px;">
                     <span style="color:#d62728; font-weight:600;">Food Availability</span><br>
                     Measures proximity to grocery stores and considers food prices in the area.
+                </div>
+
+                <div style="font-size:11px; color:#777; margin-top:10px;">
+                    Data sources: City of Seattle GeoData (2020 Census Tracts), Seattle Open Data Portal, and King County GIS.
                 </div>
             </div>
         </div>
@@ -384,10 +388,9 @@
                 const avgFood = Math.round(totalFood / tractsData.features.length)
 
                 metricsEl.innerHTML =
-                `<div class="metric"><div class="metric-label">City Average</div><div class="metric-value">${avg}/100</div></div>
-                <div class="metric"><div class="metric-label">Bus Stops</div><div class="metric-value">${buses}</div></div>
+                `<div class="metric"><div class="metric-label">Bus Stops</div><div class="metric-value">${buses}</div></div>
                 <div class="metric"><div class="metric-label">Parks</div><div class="metric-value">${parks}</div></div>
-                <div class="metric"><div class="metric-label">Food Score</div><div class="metric-value">${avgFood}/100</div></div>`;
+                <div class="metric"><div class="metric-label">Food access points</div><div class="metric-value">${totalFood}</div></div>`;
             }
 
             function calculateCompositeIndex(tractsData) {
